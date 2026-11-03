@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Face Emotion Detection (works offline)</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main>
+    <h1>Face Emotion Detection</h1>
+    <p class="muted">Runs entirely in your browser. After the first visit it also works offline.</p>
+
+    <section class="card">
+      <div class="row"><span>Connection</span><strong id="net-status">…</strong></div>
+      <div class="row"><span>Model</span><strong id="model-status">Starting…</strong></div>
+      <progress id="progress" max="100" hidden></progress>
+      <div class="row"><span>Model cached in this browser</span><strong id="cache-status">…</strong></div>
+      <div class="row"><span>App files cached (service worker)</span><strong id="shell-status">…</strong></div>
+      <div class="row"><span>Storage used by this site</span><strong id="storage-status">…</strong></div>
+    </section>
+
+    <section class="card">
+      <div class="stage">
+        <video id="video" playsinline muted></video>
+        <div id="guide" hidden></div>
+      </div>
+      <div class="buttons">
+        <button id="btn-camera" disabled>Start camera</button>
+        <button id="btn-upload" disabled>Upload photo</button>
+        <input id="file" type="file" accept="image/*" hidden />
+      </div>
+      <p class="muted small">Face the camera in good light and fit your face inside the dashed box. This is what the model sees (224×224):</p>
+      <canvas id="crop" width="224" height="224"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>Result</h2>
+      <p id="top-result" class="big">—</p>
+      <div id="bars"></div>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
