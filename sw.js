@@ -2,13 +2,18 @@
 // Hugging Face model files are NOT handled here: Transformers.js stores them itself
 // in Cache Storage under the name "transformers-cache".
 
-const VERSION = 'v1';                          // bump this every time you change a file in the repo
+const VERSION = 'v2';                          // bump this every time you change a file in the repo
 const SHELL_CACHE = `emotion-shell-${VERSION}`;
 
 // Must be exactly the same URL as the import in app.js
 const LIB_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1';
 
-const PRECACHE = ['./', './index.html', './style.css', './app.js', LIB_URL];
+const PRECACHE = [
+  './', './index.html', './style.css', './app.js',
+  './manifest.webmanifest',
+  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
+  LIB_URL,
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
