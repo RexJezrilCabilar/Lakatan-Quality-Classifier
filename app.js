@@ -24,6 +24,7 @@ const el = {
   video: $('video'), guide: $('guide'), btnCamera: $('btn-camera'),
   btnUpload: $('btn-upload'), file: $('file'), crop: $('crop'),
   top: $('top-result'), bars: $('bars'),
+  persist: $('persist-status'), btnPersist: $('btn-persist'),
 };
 const cropCtx = el.crop.getContext('2d', { willReadFrequently: true });
 
@@ -58,12 +59,23 @@ async function showStorage() {
   }
 }
 
-async function requestPersistence() {
+// Shows whether the browser has promised not to delete this site's storage and, if asked, requests that promise.
+async function protectStorage(ask) {
   try {
-    if (navigator.storage?.persist && !(await navigator.storage.persisted())) {
-      await navigator.storage.persist(); // the browser may refuse; that is fine
+    if (!navigator.storage?.persisted) {
+      el.persist.textContent = 'Not supported by this browser';
+      return;
     }
-  } catch { /* ignore */ }
+    let isProtected = await navigator.storage.persisted();
+    if (!isProtected && ask && navigator.storage.persist) {
+      isProtected = await navigator.storage.persist(); // the browser decides; it may say no
+    }
+    el.persist.textContent = isProtected ? 'Yes' : 'No (the browser may delete the model if disk space runs low)';
+    el.btnPersist.hidden = isProtected;
+  } catch {
+    el.persist.textContent = 'n/a';
+  }
+  showStorage();
 }
 
 async function setupServiceWorker() {
@@ -200,7 +212,7 @@ el.file.addEventListener('change', async () => {
   await classifyCanvas();
   el.file.value = '';
 });
-
+el.btnPersist.addEventListener('click', () => protectStorage(true));
 /* ---------- start ---------- */
 async function init() {
   updateNet();
@@ -222,8 +234,7 @@ async function init() {
 
   el.btnCamera.disabled = false;
   el.btnUpload.disabled = false;
-  await requestPersistence();
-  showStorage();
+  await protectStorage(true);
 }
 
 init();
