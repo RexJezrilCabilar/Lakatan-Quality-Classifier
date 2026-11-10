@@ -1,0 +1,15 @@
+{
+  "name": "face-emotion-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Android wrapper (Capacitor) around the face emotion web app",
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@huggingface/transformers": "4.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.0.0"
+  }
+}

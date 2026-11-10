@@ -2,7 +2,7 @@
 // Hugging Face model files are NOT handled here: Transformers.js stores them itself
 // in Cache Storage under the name "transformers-cache".
 
-const VERSION = 'v3';                          // bump this every time you change a file in the repo
+const VERSION = 'v4';                          // bump this every time you change a file in the repo
 const SHELL_CACHE = `emotion-shell-${VERSION}`;
 
 // Must be exactly the same URL as the import in app.js

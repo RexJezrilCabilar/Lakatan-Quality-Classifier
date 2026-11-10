@@ -1,0 +1,170 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create or update (for example v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write # lets the workflow create the release and attach the APK
+
+env:
+  APK_NAME: face-emotion-detection.apk # must match apkFile in app.js
+  MODEL_ID: onnx-community/face-emotion-detection-ONNX
+  MODEL_REV: 905691b2f5f19e65b2dc909b01f0451a2e81d963 # pinned Hugging Face revision of the model
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install Capacitor and Transformers.js
+        working-directory: android-app
+        run: npm install --no-audit --no-fund --onnxruntime-node-install=skip --onnxruntime-node-install-cuda=skip
+
+      - name: Assemble the web files (app, library, ONNX Runtime, model)
+        run: |
+          set -euo pipefail
+          WWW=android-app/www
+          NM=android-app/node_modules
+          M="$WWW/models/$MODEL_ID"
+          rm -rf "$WWW"
+          mkdir -p "$WWW/vendor" "$WWW/ort" "$M/onnx"
+
+          # 1) the web app itself
+          cp index.html style.css app.js manifest.webmanifest "$WWW/"
+          cp -r icons "$WWW/icons"
+
+          # 2) the library and the ONNX Runtime files that the browser version loads from the CDN
+          cp "$NM/@huggingface/transformers/dist/transformers.min.js" "$WWW/vendor/"
+          cp "$NM/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs" \
+             "$NM/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm" "$WWW/ort/"
+          ORT_WANT=$(node -p "require('./$NM/@huggingface/transformers/package.json').dependencies['onnxruntime-web']")
+          ORT_HAVE=$(node -p "require('./$NM/onnxruntime-web/package.json').version")
+          echo "onnxruntime-web wanted by Transformers.js: $ORT_WANT | installed: $ORT_HAVE"
+          if [ "$ORT_WANT" != "undefined" ] && [ "$ORT_WANT" != "$ORT_HAVE" ]; then
+            echo "::warning::onnxruntime-web version differs from what Transformers.js asks for"
+          fi
+
+          # 3) the model, pinned to one revision
+          BASE="https://huggingface.co/$MODEL_ID/resolve/$MODEL_REV"
+          curl -fL --retry 3 -o "$M/config.json" "$BASE/config.json"
+          curl -fL --retry 3 -o "$M/preprocessor_config.json" "$BASE/preprocessor_config.json"
+          curl -fL --retry 3 -o "$M/onnx/model_quantized.onnx" "$BASE/onnx/model_quantized.onnx"
+          test "$(stat -c%s "$M/onnx/model_quantized.onnx")" -gt 80000000 # the real file is about 87 MB
+          du -sh "$WWW"/*
+
+      - name: Create the Android project
+        working-directory: android-app
+        run: npx cap add android
+
+      - name: Add launcher icons (optional)
+        working-directory: android-app
+        continue-on-error: true
+        run: npx capacitor-assets generate --android
+
+      - name: Allow the camera and set the version number
+        working-directory: android-app
+        run: |
+          set -euo pipefail
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          GRADLE=android/app/build.gradle
+
+          # the page asks for the camera through getUserMedia
+          sed -i 's#<uses-permission android:name="android.permission.INTERNET" */>#&\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />#' "$MANIFEST"
+          grep -q 'android.permission.CAMERA' "$MANIFEST"
+
+          # every build needs a higher versionCode than the one before, or Android refuses to update the app
+          sed -i -E "s/^([[:space:]]*versionCode)([[:space:]]*=?[[:space:]]*)[0-9]+/\1\2${GITHUB_RUN_NUMBER}/" "$GRADLE"
+          grep -Eq "versionCode[[:space:]]*=?[[:space:]]*${GITHUB_RUN_NUMBER}\$" "$GRADLE"
+
+      - name: Make sure the Android SDK pieces are installed
+        continue-on-error: true
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build the release APK (unsigned)
+        working-directory: android-app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Sign the APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::The four ANDROID_* secrets are missing (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          UNSIGNED=android-app/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          test -f "$UNSIGNED"
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          echo "Using build-tools: $BT"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          "$BT/zipalign" -p -f 4 "$UNSIGNED" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.jks" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --key-pass env:KEY_PASSWORD \
+            --out "$APK_NAME" \
+            "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --verbose --print-certs "$APK_NAME"
+          ls -lh "$APK_NAME"
+
+      - name: Check that the APK contains the app, model and runtime
+        run: |
+          set -euo pipefail
+          LIST="$(unzip -l "$APK_NAME")"
+          for f in "assets/public/index.html" \
+                   "assets/public/vendor/transformers.min.js" \
+                   "assets/public/ort/ort-wasm-simd-threaded.asyncify.wasm" \
+                   "assets/public/models/$MODEL_ID/onnx/model_quantized.onnx"; do
+            grep -q " $f\$" <<< "$LIST" || { echo "::error::Missing inside the APK: $f"; exit 1; }
+          done
+          echo "The APK contains the app, the library, ONNX Runtime and the model."
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_NAME" --clobber
+          else
+            gh release create "$TAG" "$APK_NAME" \
+              --target "$GITHUB_SHA" \
+              --title "Android app $TAG" \
+              --notes "Offline Android build with the model inside. Download the .apk, open it, and allow the install."
+          fi
+
+      - name: Check the public download link
+        continue-on-error: true
+        run: |
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/${APK_NAME}"
+          CODE="$(curl -sSL -r 0-1023 -o /dev/null -w '%{http_code}' "$URL")"
+          echo "$URL -> HTTP $CODE"
+          [ "$CODE" = "200" ] || [ "$CODE" = "206" ]
